@@ -1,5 +1,8 @@
 #include <Arduino.h>
 
+#include "Launcher.h"
+#include "Switch.h"
+
 #define BAUD_RATE 921600
 
 #define ARM_PIN D15
@@ -32,146 +35,22 @@
 #define log(str) do {} while(0)
 #endif
 
-class Switch {
-private:
-
-  volatile bool changed;
-  volatile bool pressed;
-  unsigned long last_changed;
-  unsigned long interval;
-public:
-  Switch(unsigned long n) : changed(false), pressed(false), interval(n) { };
-
-  void set(bool v) {
-    unsigned long t = millis();
-    if (t >= last_changed + interval && v != pressed) {
-      last_changed = t;
-      pressed = v;
-      changed = true;
-    }
-  }
-
-  bool get() {
-    bool v = pressed;
-    changed = false;
-    return v;
-  }
-
-  bool has_changed() {
-    return changed;
-  }
-};
-
-// TODO: put enum values in allcaps.
-enum State { safe, armed, fuelling, fuelled, firing };
-
-class Launcher {
-private:
-  State state;
-  int pressure;
-  int target_pressure;
-public:
-  Launcher() : state(safe), pressure(0), target_pressure(0) { }
-
-  State get_state() {
-    return state;
-  }
-
-  bool arm() {
-    if(state == safe) {
-      state = armed;
-      return true;
-    }
-    return false;
-  }
-
-  bool disarm() {
-    if (state >= armed) {
-      abort();
-      dump_fuel();
-      state = safe;
-      return true;
-    }
-    return false;
-  }
-
-  bool fuel() {
-    if (state == armed) {
-      state = fuelling;
-      return true;
-    }
-    return false;
-  }
-
-  void set_pressure(int val) {
-    pressure = val;
-    if (state == fuelling && pressure >= target_pressure) {
-      state = fuelled;
-    }
-  }
-
-  int get_pressure() {
-    return pressure;
-  }
-
-  bool set_target_pressure(int val) {
-    if (state == safe) {
-      target_pressure = val;
-      return true;
-    }
-    return false;
-  }
-
-  int get_target_pressure() {
-    return target_pressure;
-  }
-
-  bool dump_fuel() {
-    if (state >= fuelled) {
-      abort();
-      state = armed;
-      return true;
-    }
-    return false;
-  }
-
-  bool fire() {
-    if (state == fuelled) {
-      state = firing;
-      return true;
-    }
-    return false;
-  }
-
-  bool abort() {
-    if (state == firing) {
-      state = fuelled;
-      return true;
-    }
-    return false;
-  }
-};
-
 Switch arm(50);
 Switch fuel(50);
 Switch fire(50);
 Launcher launcher;
-int pressure;
-
-void do_switch_isr(Switch &sw, int pin) {
-  sw.set(digitalRead(pin) == HIGH);
-}
+bool updateRequired;
 
 void arm_isr() {
-  do_switch_isr(arm, ARM_PIN);
+  arm.read();
 }
 
 void fuel_isr() {
-  do_switch_isr(fuel, FUEL_PIN);
+  fuel.read();
 }
 
 void fire_isr() {
-  do_switch_isr(fire, FIRE_PIN);
+  fire.read();
 }
 
 void setup() {
@@ -182,82 +61,108 @@ void setup() {
   logln("Rocket launcher v0");
 #endif
 
-  pinMode(ARM_PIN, INPUT);
   attachInterrupt(ARM_PIN, arm_isr, CHANGE);
-
-  pinMode(FUEL_PIN, INPUT);
   attachInterrupt(FUEL_PIN, fuel_isr, CHANGE);
-
-  pinMode(FIRE_PIN, INPUT);
   attachInterrupt(FIRE_PIN, fire_isr, CHANGE);
 }
-  
-void do_pressure() {
-  if(launcher.get_state() != safe) {
-    return;
+
+// Update the launcher's target pressure using an analog input mapped to between
+// 0 and 1024kPa.
+//
+// Doesn't do anything unless the launcher is in the SAFE state, as this is the
+// only time the state can be updated.
+//
+// Returns true if the pressure was updated.
+bool updateTargetPressure() {
+  if(launcher.getState() != SAFE) {
+    return false;
   }
 
   int val = constrain(analogRead(PRESSURE_PIN), PRESSURE_INPUT_MIN, PRESSURE_INPUT_MAX);
   int pressure = map(val, PRESSURE_INPUT_MIN, PRESSURE_INPUT_MAX, PRESSURE_OUTPUT_MIN, PRESSURE_OUTPUT_MAX);
-  launcher.set_target_pressure(pressure);
+  if (pressure != launcher.getTargetPressure()) {
+    launcher.setTargetPressure(pressure);
+    return true;
+  }
+  return false;
 }
 
-void do_launcher_state() {
+// Read the switches and update the launcher state if necessary.
+//
+// Returns true if the state was changed.
+bool updateLauncherState() {
+  bool changed = false;
+  // Arm switch - on: arm, off: disarm.
+  if (arm.hasChanged()) {
+    if (arm.get() == HIGH) {
+      changed = launcher.arm();
+    } else {
+      changed = launcher.disarm();
+    }
+  }
+
+  // Fuel switch - on: fuel, off: dump.
+  if (fuel.hasChanged()) {
+    if (fuel.get() == HIGH) {
+      changed = launcher.fuel();
+    } else {
+      changed = launcher.dumpFuel();
+    }
+  }
+
+  // Fire switch - on: fire, off: abort.
+  if (fire.hasChanged()) {
+    if (fire.get()) {
+      changed = launcher.fire();
+    } else {
+      changed = launcher.abort();
+    }
+  }
+  return changed;
+}
+
+void printLauncherState() {
   log("Launcher - ");
-  log("Target: "); log(launcher.get_target_pressure()); log("kPa");
-  log(" | Pressure: "); log(launcher.get_pressure()); log("kPa");
+  log("Target: "); log(launcher.getTargetPressure()); log("kPa");
+  log(" | Pressure: "); log(launcher.getPressure()); log("kPa");
   log(" | State: ");
   
-  switch (launcher.get_state()) {
-    case safe: log("SAFE"); break;
-    case armed: log("ARMED"); break;
-    case fuelling: log("FUELLING"); break;
-    case fuelled: log("FUELLED"); break;
-    case firing: log("FIRING"); break;
+  switch (launcher.getState()) {
+    case SAFE: log("SAFE"); break;
+    case ARMED: log("ARMED"); break;
+    case FUELLING: log("FUELLING"); break;
+    case FUELLED: log("FUELLED"); break;
+    case FIRING: log("FIRING"); break;
   }
 
   logln();
 }
 
-void do_fake_fuel() {
-  if (launcher.get_state() == fuelling && launcher.get_pressure() < launcher.get_target_pressure()) {
-    launcher.set_pressure(launcher.get_pressure() + 16);
+// We don't really have a compressor or pressure transducer, so
+// we artificially raise and lower the pressure when the rocket is
+// in the right state.
+bool doFakeFuel() {
+  if (launcher.getState() == FUELLING && launcher.getPressure() < launcher.getTargetPressure()) {
+    launcher.setPressure(launcher.getPressure() + 16);
+    return true;
   }
-  if (launcher.get_state() < fuelling && launcher.get_pressure() > 0) {
-    launcher.set_pressure(launcher.get_pressure() - 64);
+  if (launcher.getState() < FUELLING && launcher.getPressure() > 0) {
+    launcher.setPressure(launcher.getPressure() - 64);
+    return true;
   }
+  return false;
 }
 
 void loop() {
   unsigned long t = millis();
 
-  do_launcher_state();
-  do_pressure();
+  bool stateUpdated = updateLauncherState();
+  bool targetPressureUpdated = updateTargetPressure();
+  bool pressureUpdated = doFakeFuel();
 
-  if (arm.has_changed()) {
-    if (arm.get()) {
-      launcher.arm();
-    } else {
-      launcher.disarm();
-    }
+  if (stateUpdated || targetPressureUpdated || pressureUpdated) {
+    printLauncherState();
   }
 
-  if (fuel.has_changed()) {
-    if (fuel.get()) {
-      launcher.fuel();
-    } else {
-      launcher.dump_fuel();
-    }
-  }
-
-  if (fire.has_changed()) {
-    if (fire.get()) {
-      launcher.fire();
-    } else {
-      launcher.abort();
-    }
-  }
-  
-  do_fake_fuel();
   delay(200 - (millis() - t));
 }
