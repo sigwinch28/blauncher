@@ -1,29 +1,33 @@
 #pragma once
 
-enum State { SAFE, ARMED, FUELLING, FUELLED, FIRING };
+enum State { SAFE = 0, ARMED = 1, FUELLING = 2, FUELLED = 3, FIRING = 4 };
+
 
 class Launcher {
 private:
-  State state;
-  int pressure;
-  int targetPressure;
+	State state;
+	int pressure;
+	int targetPressure;
 public:
-  Launcher();
+	Launcher();
 
-  State getState();
+	State getState();
 
-  bool arm();
-  bool disarm();
+	bool setState(State newState);
+	bool allowed(State newState);
 
-  bool fuel();
-  bool dumpFuel();
+	bool arm();
+	bool disarm();
 
-  void setPressure(int pressure);
-  int getPressure();
+	bool fuel();
+	bool dumpFuel();
 
-  bool setTargetPressure(int target);
-  int getTargetPressure();
+	bool setPressure(int pressure);
+	int getPressure();
 
-  bool fire();
-  bool abort();
+	bool setTargetPressure(int target);
+	int getTargetPressure();
+
+	bool fire();
+	bool abort();
 };

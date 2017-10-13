@@ -3,80 +3,76 @@
 Launcher::Launcher() : state(SAFE), pressure(0), targetPressure(0) { }
 
 State Launcher::getState() {
-    return state;
+	return state;
+}
+
+bool Launcher::allowed(State newState) {
+	if (newState == SAFE) {
+		return true;
+	}
+	if (newState == FUELLED && state == FUELLING) {
+		return pressure >= targetPressure;
+	}
+	return newState == state-1 || newState == state+1;
+}
+
+bool Launcher::setState(State newState) {
+	if(allowed(newState)) {
+		state = newState;
+		return true;
+	}
+	return false;
 }
 
 bool Launcher::arm() {
-    if(state == SAFE) {
-        state = ARMED;
-        return true;
-    }
-    return false;
+	return setState(ARMED);
 }
 
 bool Launcher::disarm() {
-    if (state >= ARMED) {
-        abort();
-        dumpFuel();
-    state = SAFE;
-    return true;
-}
-return false;
+	abort();
+	dumpFuel();
+	return setState(SAFE);
 }
 
 bool Launcher::fuel() {
-    if (state == ARMED) {
-        state = FUELLING;
-        return true;
-    }
-    return false;
+	return setState(FUELLING);
 }
 
-void Launcher::setPressure(int pressure) {
-    this->pressure = pressure;
-    if (state == FUELLING && pressure >= targetPressure) {
-        state = FUELLED;
-    }
+bool Launcher::setPressure(int pressure) {
+	this->pressure = pressure;
+	if (state == FUELLING && pressure >= targetPressure) {
+		return setState(FUELLED);
+	} else if (state == FUELLED && pressure <= targetPressure) {
+		return setState(FUELLING);
+	}
 }
 
 int Launcher::getPressure() {
-    return pressure;
+	return pressure;
 }
 
 bool Launcher::setTargetPressure(int target) {
-    if (state == SAFE) {
-      targetPressure = target;
-      return true;
-    }
-    return false;
-  }
+	if (state == SAFE) {
+		targetPressure = target;
+		return true;
+	}
+	return false;
+}
 
 int Launcher::getTargetPressure() {
-    return targetPressure;
+	return targetPressure;
 }
 
 bool Launcher::dumpFuel() {
-    if (state >= FUELLED) {
-        abort();
-        state = ARMED;
-        return true;
-    }
-    return false;
+	abort();
+	return setState(ARMED);
 }
 
 bool Launcher::fire() {
-    if (state == FUELLED) {
-        state = FIRING;
-        return true;
-    }
-    return false;
+	return setState(FIRING);
 }
 
 
 bool Launcher::abort() {
-    if (state == FIRING) {
-        state = FUELLED;
-        return true;
-    }
-    return false;
+	return setState(FUELLED);
 }
